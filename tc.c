@@ -48,34 +48,17 @@ void state_init(state *state, char dir_original, char dir_target, float time, in
     state->dirs.dir_target = dir_target;
 }
 
-void assign_car_states(state *car_states) {
-    int cids[8] = {0, 1, 2, 3, 4, 5, 6, 7};
-    float arrival_times[8] = {1.1, 2.0, 3.3, 3.5, 4.2, 4.4, 5.7, 5.9};
-    char dirs_original[8] = {'N','N','N','S','S','N','E','W'};
-    char dirs_target[8] = {'N','N','W','S','E','N','N','N'};
-    for (int i = 0; i < NUM_CARS; i++) {
-        car_states[i].dirs.dir_original = dirs_original[i];
-        car_states[i].dirs.dir_target = dirs_target[i];
-        car_states[i].cid = cids[i];
-        car_states[i].time = arrival_times[i];
-    }
-}
-
-void threadfunc() {
-    int value;
+void ArriveIntersection(state *car) {
+    int value; // for debugging
     while (1) {
         sem_wait(&stop_signs[0]);
         // critical section start
-        printf("Hello from da thread! Semaphore has %d units avaialble\n", sem_getvalue(&stop_signs[0], &value));
+        sem_getvalue(&stop_signs[0], &value);
+        printf("Hello from da thread! Car %d has %d units avaialble\n", car->cid, value);
         // critical section end
         sem_post(&stop_signs[0]);
         sleep(1);
     }
-}
-
-void ArriveIntersection(state *car) {
-    
-    return;
 }
 
 void CrossIntersection(state *car) {
@@ -125,15 +108,38 @@ void initialize_semaphores() {
     }
 }
 
-void initialize_car_threads(state *car_states) {
+float secondsToMicroseconds(float n) {
+    return n*1000000;
+}
+
+float microsecondsToSeconds(float n) {
+    return n/1000000;
+}
+
+void assign_car_states(state *car_states) {
+    int cids[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+    float arrival_times[8] = {1.1, 2.0, 3.3, 3.5, 4.2, 4.4, 5.7, 5.9};
+    char dirs_original[8] = {'N','N','N','S','S','N','E','W'};
+    char dirs_target[8] = {'N','N','W','S','E','N','N','N'};
     for (int i = 0; i < NUM_CARS; i++) {
+        car_states[i].dirs.dir_original = dirs_original[i];
+        car_states[i].dirs.dir_target = dirs_target[i];
+        car_states[i].cid = cids[i];
+        car_states[i].time = arrival_times[i];
+        
+        // create thread for car
         pthread_t *car_thread; 
         car_thread = (pthread_t *)malloc(sizeof(*car_thread));
-        // start the thread
+
+        // sleep until arrival time
+        float t = secondsToMicroseconds(arrival_times[i]); // for debugging
+        usleep(t); // return 0 on success
+        printf("Thread is waiting for %f us before creation \n", microsecondsToSeconds(t));
+
+        // start the thread -- send car to intersection
         printf("Starting thread, semaphore is unlocked.\n");
-        pthread_create(car_thread, NULL, (void*)threadfunc, NULL);
+        pthread_create(car_thread, NULL, (void*)ArriveIntersection, &car_states[i]);
     }
-    return;
 }
 
 int main(void) {
@@ -143,7 +149,6 @@ int main(void) {
     // initialize car states
     state cars[8];
     assign_car_states(cars);
-    //initialize_car_threads(cars);
     
     getchar();
     
