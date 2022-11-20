@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <semaphore.h>
 #include <time.h>
+#include <stdbool.h>
 
 sem_t semaphore;
 const int DELTA_LEFT = 3;
@@ -16,18 +17,16 @@ const int NUM_SEMAPHORES = 24;
 
 // define all semaphores
 sem_t stop_signs[4];
-sem_t exits[4];
-sem_t inner_square[12];
-sem_t inner[4];
+sem_t intersection[20];
 // read north_to_west as "heading north initially, turn west". The idea is to define arrays of shared semaphores
-sem_t *north_to_west[5] = {&inner_square[7], &inner[2], &inner[3], &inner_square[11], &exits[3]};
-sem_t *north_to_north[5] = {&inner_square[6], &inner_square[5], &inner_square[4], &inner_square[3], &exits[0]};
-sem_t *west_to_south[5] = {&inner_square[4], &inner[1], &inner[2], &inner_square[8], &exits[2]};
-sem_t *west_to_west[5] = {&inner_square[3], &inner_square[2], &inner_square[1], &inner_square[0], &exits[3]};
-sem_t *south_to_south[5] = {&inner_square[0], &inner_square[11], &inner_square[10], &inner_square[9], &exits[2]};
-sem_t *south_to_east[5] = {&inner_square[1], &inner[0], &inner[1], &inner_square[5], &exits[1]};
-sem_t *east_to_east[5] = {&inner_square[9], &inner_square[8], &inner_square[7], &inner_square[6], &exits[1]};
-sem_t *east_to_north[5] = {&inner_square[10], &inner[3], &inner[0], &inner_square[2], &exits[0]};
+sem_t *north_to_west[5] = {&intersection[11], &intersection[18], &intersection[19], &intersection[15], &intersection[3]};
+sem_t *north_to_north[5] = {&intersection[10], &intersection[9], &intersection[8], &intersection[7], &intersection[0]};
+sem_t *west_to_south[5] = {&intersection[8], &intersection[17], &intersection[18], &intersection[13], &intersection[2]};
+sem_t *west_to_west[5] = {&intersection[7], &intersection[6], &intersection[5], &intersection[4], &intersection[3]};
+sem_t *south_to_south[5] = {&intersection[4], &intersection[15], &intersection[14], &intersection[13], &intersection[2]};
+sem_t *south_to_east[5] = {&intersection[5], &intersection[16], &intersection[17], &intersection[9], &intersection[1]};
+sem_t *east_to_east[5] = {&intersection[13], &intersection[12], &intersection[11], &intersection[10], &intersection[1]};
+sem_t *east_to_north[5] = {&intersection[14], &intersection[19], &intersection[16], &intersection[6], &intersection[0]};
 
 typedef struct _directions {
     char dir_original;
@@ -48,17 +47,84 @@ void state_init(state *state, char dir_original, char dir_target, float time, in
     state->dirs.dir_target = dir_target;
 }
 
+/***
+ * Check lock on stop sign dependning on the original direction of travel. Thread will wait in this function until semaphore for the stop sign is released.
+*/
+void check_first_at_sign(state *car) {
+    char origin = car->dirs.dir_original; // original direction of travel
+    switch (origin) {
+        case 'N': 
+            sem_wait(&stop_signs[2]);
+        case 'E':
+            sem_wait(&stop_signs[3]);
+        case 'S':
+            sem_wait(&stop_signs[0]);
+        case 'W':
+            sem_wait(&stop_signs[1]);
+    }
+} 
+
+int check_and_set_intersection_locks(int collision_points[]) {
+    int n = sizeof(collision_points)/sizeof(collision_points[0]);
+    int value;
+    int idx;
+    for (int i; i < n; i++) {
+        idx = collision_points[i];
+        sem_getvalue(&intersection[idx], &value);
+        if (value == 0) {
+            return 0;
+        }
+        else {
+            sem_wait(&intersection[idx]);
+        }
+    }
+    return 1;
+}
+
+
+void check_intersection(state *car) {
+    char origin = car->dirs.dir_original; // original direction of travel
+    char target = car->dirs.dir_target; 
+    int collision_points[5] = {0,0,0,0,0};
+    // generate a list of integers corresponding to intersection semaphore indices
+    if (origin == 'N' && target == 'W') {
+        int collision_points[5] = {11,18,19,15,3};
+    }
+    if (origin == 'N' && target == 'N') {
+        int collision_points[5] = {10,9,8,7,0};
+    }
+    if (origin == 'W' && target == 'S') {
+        int collision_points[5] = {8,17,18,12,2};
+    }
+    if (origin == 'W' && target == 'W') {
+        int collision_points[5] = {7,6,5,4,3};
+    }
+    if (origin == 'S' && target == 'S') {
+        int collision_points[5] = {4,15,14,13,2};
+    }
+    if (origin == 'S' && target == 'E') {
+        int collision_points[5] = {5,16,17,9,1};
+    }
+    if (origin == 'E' && target == 'E') {
+        int collision_points[5] = {13,12,11,10,1};
+    }
+    if (origin == 'E' && target == 'N') {
+        int collision_points[5] = {14,19,16,6,0};
+    }
+
+    // check if intersection is clear -- and if so, acquire lock on relevant semaphore indices
+    check_and_set_intersection_locks(collision_points);
+    
+}
+
 void ArriveIntersection(state *car) {
     int value; // for debugging
-    while (1) {
-        sem_wait(&stop_signs[0]);
-        // critical section start
-        sem_getvalue(&stop_signs[0], &value);
-        printf("Hello from da thread! Car %d has %d units avaialble\n", car->cid, value);
-        // critical section end
-        sem_post(&stop_signs[0]);
-        sleep(1);
-    }
+    printf("Time: %f Car %d (->%c->%c)  arriving \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
+    //printf("Hello from da thread! Car %d has arrived at intersection with %d units avaialble\n", car->cid, value);
+    check_first_at_sign(car);
+    check_intersection(car);
+    sem_getvalue(&stop_signs[0], &value);
+    sleep(1);
 }
 
 void CrossIntersection(state *car) {
@@ -75,36 +141,19 @@ void Car(state *car) {
     ExitIntersection(&car);
 }
 
-void print_car(state *car) {
-    printf("Time: %f Car: %s (->%s ->%s) %s", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
-}
+// void print_event(state *car, const char s[]) {
+//     printf("Time: %f Car: %s (->%s ->%s) %s %s", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target, s);
+// }
 
 void initialize_semaphores() {
     int n = 0;
-    int value;
     n = sizeof(stop_signs)/sizeof(stop_signs[0]);
     for (int i  = 0; i < n; i++) {
         sem_init(&stop_signs[i], 0, 1);
-        sem_getvalue(&stop_signs[i], &value);
-        printf("stop sign semaphore %d has been allocated with %d \n", i, *(&value));
     }
-    n = sizeof(exits)/sizeof(exits[0]);
+    n = sizeof(intersection)/sizeof(intersection[0]);
     for (int i  = 0; i < n; i++) {
-        sem_init(&exits[i], 0, 1);
-        sem_getvalue(&exits[i], &value);
-        printf("exit semaphore %d has been allocated with %d \n", i, *(&value));
-    }
-    n = sizeof(inner_square)/sizeof(inner_square[0]);
-    for (int i  = 0; i < n; i++) {
-        sem_init(&inner_square[i], 0, 1);
-        sem_getvalue(&inner_square[i], &value);
-        printf("inner_square semaphore %d has been allocated with %d \n", i, *(&value));
-    }
-    n = sizeof(inner)/sizeof(inner[0]);
-    for (int i  = 0; i < n; i++) {
-        sem_init(&inner[i], 0, 1);
-        sem_getvalue(&inner[i], &value);
-        printf("inner semaphore %d has been allocated with %d \n", i, *(&value));
+        sem_init(&intersection[i], 0, 1);
     }
 }
 
@@ -131,13 +180,11 @@ void assign_car_states(state *car_states) {
         pthread_t *car_thread; 
         car_thread = (pthread_t *)malloc(sizeof(*car_thread));
 
-        // sleep until arrival time
-        float t = secondsToMicroseconds(arrival_times[i]); // for debugging
+        // sleep until car arrival time
+        float t = secondsToMicroseconds(arrival_times[i]);
         usleep(t); // return 0 on success
-        printf("Thread is waiting for %f us before creation \n", microsecondsToSeconds(t));
 
         // start the thread -- send car to intersection
-        printf("Starting thread, semaphore is unlocked.\n");
         pthread_create(car_thread, NULL, (void*)ArriveIntersection, &car_states[i]);
     }
 }
@@ -146,22 +193,9 @@ int main(void) {
     // initialize semaphores
     initialize_semaphores();
 
-    // initialize car states
+    // initialize car states and create threads for each
     state cars[8];
     assign_car_states(cars);
-    
-    getchar();
-    
-    sem_wait(&stop_signs[0]);
-    printf("Semaphore locked.\n");
-    
-    // do stuff with whatever is shared between threads
-    getchar();
-    
-    printf("Semaphore unlocked.\n");
-    sem_post(&stop_signs[0]);
-    
-    getchar();
     
     return 0;
 }
