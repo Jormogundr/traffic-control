@@ -6,6 +6,7 @@
 #include <semaphore.h>
 #include <time.h>
 #include <stdbool.h>
+#include "common.h"
 
 sem_t semaphore;
 const int DELTA_LEFT = 3;
@@ -27,6 +28,11 @@ sem_t *south_to_south[5] = {&intersection[4], &intersection[15], &intersection[1
 sem_t *south_to_east[5] = {&intersection[5], &intersection[16], &intersection[17], &intersection[9], &intersection[1]};
 sem_t *east_to_east[5] = {&intersection[13], &intersection[12], &intersection[11], &intersection[10], &intersection[1]};
 sem_t *east_to_north[5] = {&intersection[14], &intersection[19], &intersection[16], &intersection[6], &intersection[0]};
+sem_t *east_to_south = &intersection[2];
+sem_t *north_to_east = &intersection[1];
+sem_t *west_to_north = &intersection[0];
+sem_t *south_to_west = &intersection[3];
+
 
 typedef struct _directions {
     char dir_original;
@@ -64,89 +70,141 @@ void check_first_at_sign(state *car) {
     }
 } 
 
-int check_and_set_intersection_locks(int collision_points[]) {
+void check_and_set_intersection_locks(sem_t *collision_points[]) {
     int n = sizeof(collision_points)/sizeof(collision_points[0]);
     int value;
-    int idx;
     for (int i; i < n; i++) {
-        idx = collision_points[i];
-        sem_getvalue(&intersection[idx], &value);
+        sem_getvalue(&collision_points[i], &value);
         if (value == 0) {
-            return 0;
+            return;
         }
         else {
-            sem_wait(&intersection[idx]);
+            sem_wait(&intersection[i]);
         }
     }
-    return 1;
 }
 
-
-void check_intersection(state *car) {
+sem_t *check_intersection(state *car) {
     char origin = car->dirs.dir_original; // original direction of travel
     char target = car->dirs.dir_target; 
-    int collision_points[5] = {0,0,0,0,0};
+    int value;
     // generate a list of integers corresponding to intersection semaphore indices
     if (origin == 'N' && target == 'W') {
-        int collision_points[5] = {11,18,19,15,3};
+        return &north_to_west;
     }
-    if (origin == 'N' && target == 'N') {
-        int collision_points[5] = {10,9,8,7,0};
+    else if (origin == 'N' && target == 'N') {
+        sem_getvalue(&north_to_north, &value);
+        return &north_to_north;
     }
-    if (origin == 'W' && target == 'S') {
-        int collision_points[5] = {8,17,18,12,2};
+    else if (origin == 'W' && target == 'S') {
+        return &west_to_south;
     }
-    if (origin == 'W' && target == 'W') {
-        int collision_points[5] = {7,6,5,4,3};
+    else if (origin == 'W' && target == 'W') {
+        return &west_to_west;
     }
-    if (origin == 'S' && target == 'S') {
-        int collision_points[5] = {4,15,14,13,2};
+    else if (origin == 'S' && target == 'S') {
+        return &south_to_south;
     }
-    if (origin == 'S' && target == 'E') {
-        int collision_points[5] = {5,16,17,9,1};
+    else if (origin == 'S' && target == 'E') {
+        return &south_to_east;
     }
-    if (origin == 'E' && target == 'E') {
-        int collision_points[5] = {13,12,11,10,1};
+    else if (origin == 'E' && target == 'E') {
+        return &east_to_east;
     }
-    if (origin == 'E' && target == 'N') {
-        int collision_points[5] = {14,19,16,6,0};
+    else if (origin == 'E' && target == 'N') {
+        return &east_to_north;
+    }
+    else if (origin == 'N' && target == 'E') {
+        return &north_to_east;
+    }
+    else if (origin == 'W' && target == 'N') {
+        return &west_to_north;
+    }
+    else if (origin == 'S' && target == 'W') {
+        return &south_to_west;
+    }
+    else if (origin == 'E' && target == 'S') {
+        return &east_to_south;
     }
 
     // check if intersection is clear -- and if so, acquire lock on relevant semaphore indices
-    check_and_set_intersection_locks(collision_points);
+    // check_and_set_intersection_locks();
     
+}
+
+char get_turn(state *car) {
+    char origin = car->dirs.dir_original; // original direction of travel
+    char target = car->dirs.dir_target; 
+    // L -> left, R -> right, S -> straight. R is the default -- if not any of below cases it must be a right turn
+    char turn = 'R';
+    // generate a list of integers corresponding to intersection semaphore indices
+    if (origin == 'N' && target == 'W') {
+        turn = 'L';
+    }
+    if (origin == 'N' && target == 'N') {
+        turn = 'S';
+    }
+    if (origin == 'W' && target == 'S') {
+        turn = 'L';
+    }
+    if (origin == 'W' && target == 'W') {
+        turn = 'S';
+    }
+    if (origin == 'S' && target == 'S') {
+        turn = 'S';
+    }
+    if (origin == 'S' && target == 'E') {
+        turn = 'L';
+    }
+    if (origin == 'E' && target == 'E') {
+        turn = 'S';
+    }
+    if (origin == 'E' && target == 'N') {
+        turn = 'L';
+    }
+    return turn;
 }
 
 void ArriveIntersection(state *car) {
     int value; // for debugging
-    printf("Time: %f Car %d (->%c->%c)  arriving \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
+    //sem_getvalue(&stop_signs[0], &value);
     //printf("Hello from da thread! Car %d has arrived at intersection with %d units avaialble\n", car->cid, value);
+
+    printf("Time: %f Car %d (->%c->%c)  arriving \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
     check_first_at_sign(car);
-    check_intersection(car);
-    sem_getvalue(&stop_signs[0], &value);
+    sem_t *collision_points = check_intersection(car);
+    check_and_set_intersection_locks(collision_points);
+    char turn = get_turn(car);
+    CrossIntersection(turn, car);
+    ExitIntersection(car, collision_points);
+    
     sleep(1);
 }
 
-void CrossIntersection(state *car) {
-    return;
+void CrossIntersection(char turn, state *car) {
+    printf("Time: %f Car %d (->%c->%c)      crossing \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
+    // wait for time depending on type of turn
+    switch (turn) {
+        case 'L':
+            Spin(DELTA_LEFT);
+        case 'R':
+            Spin(DELTA_RIGHT);
+        case 'S':
+            Spin(DELTA_STRAIGHT); 
+    }
 }
 
-void ExitIntersection(state *car) {
-    return;
+void ExitIntersection(state *car, int collision_points[]) {
+    printf("Time: %f Car %d (->%c->%c)          exiting \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
+    int n = sizeof(collision_points)/sizeof(collision_points[0]);
+    for (int i = 0; i < n; i++) {
+        sem_post(&collision_points[i]);
+    }
 }
-
-void Car(state *car) {
-    ArriveIntersection(&car);
-    CrossIntersection(&car);
-    ExitIntersection(&car);
-}
-
-// void print_event(state *car, const char s[]) {
-//     printf("Time: %f Car: %s (->%s ->%s) %s %s", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target, s);
-// }
 
 void initialize_semaphores() {
     int n = 0;
+    int value; // for debugging
     n = sizeof(stop_signs)/sizeof(stop_signs[0]);
     for (int i  = 0; i < n; i++) {
         sem_init(&stop_signs[i], 0, 1);
@@ -154,6 +212,7 @@ void initialize_semaphores() {
     n = sizeof(intersection)/sizeof(intersection[0]);
     for (int i  = 0; i < n; i++) {
         sem_init(&intersection[i], 0, 1);
+        sem_getvalue(&intersection[i], &value);
     }
 }
 
