@@ -46,6 +46,7 @@ typedef struct _state {
 
 } state;
 
+
 void state_init(state *state, char dir_original, char dir_target, float time, int cid) {
     state->cid = cid;
     state->time = time;
@@ -70,61 +71,84 @@ void check_first_at_sign(state *car) {
     }
 } 
 
-void check_and_set_intersection_locks(sem_t *collision_points[]) {
+void check_and_set_intersection_locks(int collision_points[]) {
     int n = sizeof(collision_points)/sizeof(collision_points[0]);
     int value;
+    int idx;
     for (int i; i < n; i++) {
-        sem_getvalue(&collision_points[i], &value);
-        if (value == 0) {
-            return;
-        }
-        else {
-            sem_wait(&intersection[i]);
-        }
+        idx = (int)collision_points[i];
+        sem_wait(&intersection[idx]);
+    //  sem_getvalue(&collision_points[idx], &value)
+    //     if (value == 0) {
+    //         return;
+    //     }
+    //     else {
+    //         sem_wait(&intersection[idx]);
+    //     }
     }
 }
 
-sem_t *check_intersection(state *car) {
+void assign_collision_points(int collision_points[5], int points[5], int array_size) {
+    for (int i = 0 ; i < array_size; i++) {
+        collision_points[i] = points[i];
+        printf("collision point %d with i %d \n", collision_points[i], i);
+    }
+    usleep(0.5);
+}
+
+void check_intersection(state *car, int *collision_points, int array_size) {
     char origin = car->dirs.dir_original; // original direction of travel
     char target = car->dirs.dir_target; 
     int value;
+    
     // generate a list of integers corresponding to intersection semaphore indices
     if (origin == 'N' && target == 'W') {
-        return &north_to_west;
+        int points_to_assign[5] = {11, 18, 19, 15, 3};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'N' && target == 'N') {
-        sem_getvalue(&north_to_north, &value);
-        return &north_to_north;
-    }
+        int points_to_assign[5] = {10, 9, 8, 7, 0};
+        assign_collision_points(collision_points, points_to_assign, array_size);
+    }   
     else if (origin == 'W' && target == 'S') {
-        return &west_to_south;
+        int points_to_assign[5] = {8, 17, 18, 12, 2};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'W' && target == 'W') {
-        return &west_to_west;
+        int points_to_assign[5] = {7,8,6,5,4,3};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'S' && target == 'S') {
-        return &south_to_south;
+        int points_to_assign[5] = {4,15,14,13,2};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'S' && target == 'E') {
-        return &south_to_east;
+        int points_to_assign[5] = {5,16,17,9,1};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'E' && target == 'E') {
-        return &east_to_east;
+        int points_to_assign[5] = {4,5,6,7,1};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'E' && target == 'N') {
-        return &east_to_north;
+        int points_to_assign[5] = {14,19,16,6,0};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'N' && target == 'E') {
-        return &north_to_east;
+        int points_to_assign[1] = {1};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'W' && target == 'N') {
-        return &west_to_north;
+        int points_to_assign[1]= {0};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'S' && target == 'W') {
-        return &south_to_west;
+        int points_to_assign[1] = {3};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
     else if (origin == 'E' && target == 'S') {
-        return &east_to_south;
+        int points_to_assign[1] = {2};
+        assign_collision_points(collision_points, points_to_assign, array_size);
     }
 
     // check if intersection is clear -- and if so, acquire lock on relevant semaphore indices
@@ -165,23 +189,7 @@ char get_turn(state *car) {
     return turn;
 }
 
-void ArriveIntersection(state *car) {
-    int value; // for debugging
-    //sem_getvalue(&stop_signs[0], &value);
-    //printf("Hello from da thread! Car %d has arrived at intersection with %d units avaialble\n", car->cid, value);
-
-    printf("Time: %f Car %d (->%c->%c)  arriving \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
-    check_first_at_sign(car);
-    sem_t *collision_points = check_intersection(car);
-    check_and_set_intersection_locks(collision_points);
-    char turn = get_turn(car);
-    CrossIntersection(turn, car);
-    ExitIntersection(car, collision_points);
-    
-    sleep(1);
-}
-
-void CrossIntersection(char turn, state *car) {
+void CrossIntersection(state *car, char turn) {
     printf("Time: %f Car %d (->%c->%c)      crossing \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
     // wait for time depending on type of turn
     switch (turn) {
@@ -197,9 +205,29 @@ void CrossIntersection(char turn, state *car) {
 void ExitIntersection(state *car, int collision_points[]) {
     printf("Time: %f Car %d (->%c->%c)          exiting \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
     int n = sizeof(collision_points)/sizeof(collision_points[0]);
+    int idx;
     for (int i = 0; i < n; i++) {
+        idx = collision_points[i];
         sem_post(&collision_points[i]);
     }
+}
+
+void ArriveIntersection(state *car) {
+    int value; // for debugging
+    int collision_points[5] = {0,0,0,0,0};
+    int array_size = 5;
+    //sem_getvalue(&stop_signs[0], &value);
+    //printf("Hello from da thread! Car %d has arrived at intersection with %d units avaialble\n", car->cid, value);
+
+    printf("Time: %f Car %d (->%c->%c)  arriving \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
+    check_first_at_sign(car);
+    check_intersection(car, collision_points, array_size);
+    check_and_set_intersection_locks(collision_points);
+    char turn = get_turn(car);
+    CrossIntersection(car, turn);
+    ExitIntersection(car, collision_points);
+    
+    sleep(1);
 }
 
 void initialize_semaphores() {
@@ -229,7 +257,7 @@ void assign_car_states(state *car_states) {
     float arrival_times[8] = {1.1, 2.0, 3.3, 3.5, 4.2, 4.4, 5.7, 5.9};
     char dirs_original[8] = {'N','N','N','S','S','N','E','W'};
     char dirs_target[8] = {'N','N','W','S','E','N','N','N'};
-    for (int i = 0; i < NUM_CARS; i++) {
+    for (int i = 0; i < NUM_CARS; i++) { // # i < NUM_CARS
         car_states[i].dirs.dir_original = dirs_original[i];
         car_states[i].dirs.dir_target = dirs_target[i];
         car_states[i].cid = cids[i];
