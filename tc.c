@@ -14,12 +14,8 @@ float DELTA_LEFT = 3.0;
 float DELTA_STRAIGHT = 2.0;
 float DELTA_RIGHT = 1.0;
 const int NUM_CARS = 8;
-const int NUM_SEMAPHORES = 24;
-float GLOBAL_TIME = 0;
-char PREV_CAR_TARGET = 'N';
-char PREV_CAR_ORIGIN = 'N';
+float MOST_RECENT_TE = 3.1; // initialize most recently crossed car's exit time to known value
 int DEBUG = 0;
-int CARS_IN_INTERSECTION = 0;
 
 // define all semaphores
 sem_t stop_signs[4];
@@ -46,15 +42,17 @@ typedef struct _directions {
 
 typedef struct _state {
     directions dirs;
-    float time;
+    float arrival_time;
+    float wait_time;
+    float exit_time;
+    float cross_time;
     int cid;
 
 } state;
 
-
 void state_init(state *state, char dir_original, char dir_target, float time, int cid) {
     state->cid = cid;
-    state->time = time;
+    state->arrival_time = time;
     state->dirs.dir_original = dir_original;
     state->dirs.dir_target = dir_target;
 }
@@ -126,13 +124,12 @@ void lock_intersection(state *car, int collision_points[5], int array_size) {
             printf("PRE WAIT Check and lock for car %d: collision point %d has semaphore units = %d \n", car->cid, collision_points[i], value);
         }
 
-        // look for collision points along the trajectory and wait if there are any
+        // look for collision points along the trajectory and wait if there are any currently locked
         for (int j = i; j < array_size; j++) {
             sub_idx = collision_points[j];
             sem_getvalue(&intersection[sub_idx], &value);
-            // wait at point in trajectory where we detect a collision
+            // wait at point in trajectory where we detect a collision ahead of us
             while (abs(value) <= 0) {
-                if (DEBUG) printf("In scope lock_intersection, car %d waiting for cars to finish crossing, collision point %d is occupied \n", car->cid, collision_points[j]);
                 sem_getvalue(&intersection[sub_idx], &value);
             }
         }
@@ -163,9 +160,6 @@ void assign_collision_points(state *car, int collision_points[5], int points[5],
         printf("Assigning collision points in intersection for car %d (->%c, ->%c)... \n", car->cid, car->dirs.dir_original, car->dirs.dir_target);
     }
     for (int i = 0 ; i < array_size; i++) {
-        // break for dummy val -1
-        if (points[i] < 0) 
-            break;
         collision_points[i] = points[i];
         if (DEBUG) printf("Car %d (->%c, ->%c) has been assigned collision point %d for index %d \n", car->cid, car->dirs.dir_original, car->dirs.dir_target, points[i], i);
     }
@@ -302,8 +296,7 @@ void ArriveIntersection(state *car) {
     int array_size;
     int number_of_collision_points;
     char turn;
-
-    printf("Time: %f Car %d (->%c->%c)  arriving \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
+    printf("Time: %0.1f Car %d (->%c->%c)  arriving \n", car->arrival_time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
 
     // skip lock of stop sign if previous car and current car are heading same direction with same origin
     // if (!(car->dirs.dir_target == PREV_CAR_TARGET && car->dirs.dir_original == PREV_CAR_ORIGIN))
@@ -311,14 +304,12 @@ void ArriveIntersection(state *car) {
     array_size = assign_number_of_collision_points(turn);
     check_and_lock_stop_sign(car);
     check_intersection(car, collision_points, array_size);
-    
+
     if (DEBUG) {
         for (int i = 0 ; i < array_size; i++) {
             printf("In scope ArriveIntersection, car %d (->%c, ->%c) has been assigned collision point %d for index %d \n", car->cid, car->dirs.dir_original, car->dirs.dir_target, collision_points[i], i);
         }
     }
-
-    
     if (DEBUG) printf("In scope ArriveIntersection,  Car %d (->%c->%c)  arriving has been assigned a turn %c \n", car->cid, car->dirs.dir_original, car->dirs.dir_target, turn);
     if (DEBUG) printf("In scope ArriveIntersection,  Car %d (->%c->%c)  arriving has number of collision points %d \n", car->cid, car->dirs.dir_original, car->dirs.dir_target, number_of_collision_points);
     CrossIntersection(car, collision_points, turn);
@@ -326,27 +317,28 @@ void ArriveIntersection(state *car) {
 }
 
 void CrossIntersection(state *car, int collision_points[5], char turn) {
-    printf("Time: %f Car %d (->%c->%c)      crossing \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
+    update_car_wait_time(car);
+    float current_cross_time = car->arrival_time + car->wait_time;
+    printf("Time: %0.1f Car %d (->%c->%c)      crossing \n", current_cross_time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
     if (DEBUG) printf("In scope CrossIntersection, car %d (->%c->%c) is making turn %c \n", car->cid, car->dirs.dir_original, car->dirs.dir_target, turn);
-    CARS_IN_INTERSECTION++;
 
     // wait for time depending on type of turn
     if (turn == 'L') {
             if (DEBUG) printf("pre spin for car %d for turn %c \n", car->cid, turn);
             Spin(DELTA_LEFT);
-            car->time += DELTA_LEFT;
+            car->cross_time = DELTA_LEFT;
             if (DEBUG) printf("post spin for car %d for turn %c \n", car->cid, turn);
     }
     else if (turn == 'S') {
             if (DEBUG) printf("pre spin for car %d for turn %c \n", car->cid, turn);
             Spin(DELTA_STRAIGHT);
-            car->time += DELTA_STRAIGHT;
+            car->cross_time = DELTA_STRAIGHT;
             if (DEBUG) printf("post spin for car %d for turn %c \n", car->cid, turn);
     }
     else {
             if (DEBUG) printf("pre spin for car %d for turn %c \n", car->cid, turn);
             Spin(DELTA_RIGHT);
-            car->time += DELTA_RIGHT;
+            car->cross_time = DELTA_RIGHT;
             if (DEBUG) printf("post spin for car %d for turn %c \n", car->cid, turn);
     }
     // since we are crossing, free stop sign for next car
@@ -354,11 +346,23 @@ void CrossIntersection(state *car, int collision_points[5], char turn) {
 }
 
 void ExitIntersection(state *car, int collision_points[5], int array_size) {
-    printf("Time: %f Car %d (->%c->%c)          exiting \n", car->time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
+    update_car_exit_time(car);
+    printf("Time: %0.1f Car %d (->%c->%c)          exiting \n", car->exit_time, car->cid, car->dirs.dir_original, car->dirs.dir_target);
     unlock_intersection(car, collision_points, array_size);
-    CARS_IN_INTERSECTION--;
+    MOST_RECENT_TE = car->exit_time;
 }
 
+void update_car_wait_time(state *car) {
+    if (car->cid == 0) {
+        car->wait_time = 0;
+        return;
+    }
+    car->wait_time = MOST_RECENT_TE - car->arrival_time;
+}
+
+void update_car_exit_time(state *car) {
+    car->exit_time = car->cross_time + MOST_RECENT_TE;
+}
 
 void initialize_semaphores() {
     int n = 0;
@@ -373,7 +377,7 @@ void initialize_semaphores() {
     }
 }
 
-void assign_car_states(state *cars) {
+void simulate(state *cars) {
     // create array of threads for cars
     pthread_t car_threads[8]; 
     int cids[8] = {0, 1, 2, 3, 4, 5, 6, 7};
@@ -384,7 +388,10 @@ void assign_car_states(state *cars) {
         cars[i].dirs.dir_original = dirs_original[i];
         cars[i].dirs.dir_target = dirs_target[i];
         cars[i].cid = cids[i];
-        cars[i].time = arrival_times[i];
+        cars[i].arrival_time = arrival_times[i];
+        cars[i].cross_time = 0;
+        cars[i].exit_time = 0;
+        cars[i].wait_time = 0;
         
         // sleep until car arrival time
         float dt = arrival_times[i];
@@ -411,7 +418,7 @@ int main(void) {
 
     // initialize car states and create threads for each
     state cars[8];
-    assign_car_states(cars);
+    simulate(cars);
     
     return 0;
 }
